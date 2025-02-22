@@ -1,6 +1,6 @@
 module github.com/projectdiscovery/cleanhttp
 
-go 1.23.3
+go 1.22.2
 
 require github.com/stretchr/testify v1.10.0
 
