@@ -86,9 +86,12 @@ func NewMatcher(rulesPath string) (*Matcher, error) {
 // compileRule converts a JSON rule into a compiled Rule
 func compileRule(jr RuleJSON) (Rule, error) {
 	rule := Rule{
-		Headers:      jr.HTTPHeader,
+		Headers:      make(map[string]string),
 		BodyContains: jr.HTTPBody,
 		TitleExact:   jr.HTTPTitle,
+	}
+	for k, v := range jr.HTTPHeader {
+		rule.Headers[strings.ToLower(k)] = v
 	}
 
 	// Parse status code (single or range)
