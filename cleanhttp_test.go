@@ -22,7 +22,7 @@ func TestMatcher(t *testing.T) {
 			name: "cloudflare match",
 			response: Response{
 				StatusCode: 503,
-				Headers:    map[string]string{"Server": "cloudflare"},
+				Headers:    map[string]string{"server": "cloudflare"},
 				Body:       "error code: 1020",
 			},
 			want: []string{"cloudflare"},
@@ -31,8 +31,68 @@ func TestMatcher(t *testing.T) {
 			name: "cloudflare no match - missing header",
 			response: Response{
 				StatusCode: 503,
-				Headers:    map[string]string{"Server": "nginx"},
+				Headers:    map[string]string{"server": "nginx"},
 				Body:       "error code: 1020",
+			},
+			want: nil,
+		},
+		{
+			name: "cloudflare redirect match",
+			response: Response{
+				StatusCode: 301,
+				Headers: map[string]string{
+					"server":                 "cloudflare",
+					"location":               "https://example.com/",
+					"x-original-request-url": "https://example.com:2052/",
+				},
+			},
+			want: []string{"cloudflare_redirection"},
+		},
+		{
+			name: "cloudflare redirect - wrong source port",
+			response: Response{
+				StatusCode: 301,
+				Headers: map[string]string{
+					"server":                 "cloudflare",
+					"location":               "https://example.com/",
+					"x-original-request-url": "https://example.com:9999/",
+				},
+			},
+			want: nil,
+		},
+		{
+			name: "cloudflare redirect - wrong target port",
+			response: Response{
+				StatusCode: 301,
+				Headers: map[string]string{
+					"server":                 "cloudflare",
+					"location":               "https://example.com:8080/",
+					"x-original-request-url": "https://example.com:2052/",
+				},
+			},
+			want: nil,
+		},
+		{
+			name: "cloudflare redirect - not to root",
+			response: Response{
+				StatusCode: 301,
+				Headers: map[string]string{
+					"server":                 "cloudflare",
+					"location":               "https://example.com/path",
+					"x-original-request-url": "https://example.com:2052/",
+				},
+			},
+			want: nil,
+		},
+		{
+			name: "cloudflare redirect - different host",
+			response: Response{
+				StatusCode: 301,
+				Headers: map[string]string{
+					"server":                 "cloudflare",
+					"location":               "https://different.com/",
+					"x-original-request-url": "https://example.com:2052/",
+				},
 			},
 			want: nil,
 		},
@@ -43,7 +103,7 @@ func TestMatcher(t *testing.T) {
 				Title:      "Invalid URL",
 				Body:       "The requested URL \"[no URL]\", is invalid.",
 				Headers: map[string]string{
-					"Server": "AkamaiGHost",
+					"server": "AkamaiGHost",
 				},
 			},
 			want: []string{"akamai"},
@@ -55,7 +115,7 @@ func TestMatcher(t *testing.T) {
 				Title:      "Not Found",
 				Body:       "The requested URL /test.php is invalid",
 				Headers: map[string]string{
-					"Server": "AkamaiGHost",
+					"server": "AkamaiGHost",
 				},
 			},
 			want: nil,
@@ -64,7 +124,7 @@ func TestMatcher(t *testing.T) {
 			name: "no matches",
 			response: Response{
 				StatusCode: 200,
-				Headers:    map[string]string{"Server": "nginx"},
+				Headers:    map[string]string{"server": "nginx"},
 				Title:      "Welcome",
 				Body:       "Hello, World!",
 			},

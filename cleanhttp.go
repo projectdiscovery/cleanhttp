@@ -6,8 +6,10 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -21,6 +23,14 @@ type Response struct {
 	Headers    map[string]string
 	Body       string
 	Title      string
+	RequestURL string
+}
+
+// CheckRedirect represents redirect checking configuration
+type CheckRedirect struct {
+	SourcePorts        []int `json:"source_ports"`
+	TargetPorts        []int `json:"target_ports"`
+	RedirectToRootHost bool  `json:"redirect_to_root_host"`
 }
 
 // RuleJSON represents the JSON structure for loading rules
@@ -30,6 +40,7 @@ type RuleJSON struct {
 	HTTPBody       []string          `json:"http_body,omitempty"`
 	HTTPBodyRegex  []string          `json:"http_body_regex,omitempty"`
 	HTTPTitle      string            `json:"http_title,omitempty"`
+	CheckRedirect  *CheckRedirect    `json:"check_redirect,omitempty"`
 }
 
 // ServicesJSON represents the root JSON structure
@@ -39,12 +50,13 @@ type ServicesJSON struct {
 
 // Rule contains the compiled patterns for matching
 type Rule struct {
-	StatusMin    int
-	StatusMax    int
-	Headers      map[string]string
-	BodyContains []string
-	BodyRegex    []*regexp.Regexp
-	TitleExact   string
+	StatusMin     int
+	StatusMax     int
+	Headers       map[string]string
+	BodyContains  []string
+	BodyRegex     []*regexp.Regexp
+	TitleExact    string
+	RedirectCheck *CheckRedirect
 }
 
 // Matcher handles the WAF/CDN detection rules
@@ -83,12 +95,29 @@ func NewMatcher(rulesPath string) (*Matcher, error) {
 	return &Matcher{rules: rules}, nil
 }
 
+func (m *Matcher) AddRules(data []byte) error {
+	var servicesJSON ServicesJSON
+	if err := json.Unmarshal(data, &servicesJSON); err != nil {
+		return fmt.Errorf("parsing rules JSON: %w", err)
+	}
+
+	for provider, jsonRule := range servicesJSON.Services {
+		ruleCompiled, err := compileRule(jsonRule)
+		if err != nil {
+			return fmt.Errorf("compiling rule for %s: %w", provider, err)
+		}
+		m.rules[provider] = ruleCompiled
+	}
+	return nil
+}
+
 // compileRule converts a JSON rule into a compiled Rule
 func compileRule(jr RuleJSON) (Rule, error) {
 	rule := Rule{
-		Headers:      make(map[string]string),
-		BodyContains: jr.HTTPBody,
-		TitleExact:   jr.HTTPTitle,
+		Headers:       make(map[string]string),
+		BodyContains:  jr.HTTPBody,
+		TitleExact:    jr.HTTPTitle,
+		RedirectCheck: jr.CheckRedirect,
 	}
 	for k, v := range jr.HTTPHeader {
 		rule.Headers[strings.ToLower(k)] = v
@@ -131,6 +160,12 @@ func compileRule(jr RuleJSON) (Rule, error) {
 
 // Match returns the names of WAF/CDN providers that match the response
 func (m *Matcher) Match(resp Response) []string {
+	loweredHeaders := make(map[string]string)
+	for k, v := range resp.Headers {
+		loweredHeaders[strings.ToLower(k)] = v
+	}
+	resp.Headers = loweredHeaders
+
 	var matches []string
 	for provider, rule := range m.rules {
 		if matchRule(resp, rule) {
@@ -176,5 +211,67 @@ func matchRule(resp Response, rule Rule) bool {
 		return false
 	}
 
+	// Redirect check
+	if rule.RedirectCheck != nil {
+		if !matchRedirectRule(resp, *rule.RedirectCheck) {
+			return false
+		}
+	}
+
 	return true
+}
+
+// matchRedirectRule checks if a response matches redirect rules
+func matchRedirectRule(resp Response, redirectRule CheckRedirect) bool {
+	parsedOriginalURL, err := url.Parse(resp.RequestURL)
+	if err != nil {
+		return false
+	}
+	originalPort := getPortFromURL(parsedOriginalURL)
+
+	if !slices.Contains(redirectRule.SourcePorts, originalPort) {
+		return false
+	}
+
+	location, exists := resp.Headers["location"]
+	if !exists {
+		return false
+	}
+
+	parsedLocation, err := url.Parse(location)
+	if err != nil {
+		return false
+	}
+
+	if !parsedLocation.IsAbs() {
+		parsedLocation.Scheme = parsedOriginalURL.Scheme
+		parsedLocation.Host = parsedOriginalURL.Host
+	}
+
+	if redirectRule.RedirectToRootHost {
+		if parsedLocation.Path != "/" && parsedLocation.Path != "" {
+			return false
+		}
+	}
+	targetPort := getPortFromURL(parsedLocation)
+	return slices.Contains(redirectRule.TargetPorts, targetPort)
+}
+
+// getPortFromURL extracts port from URL, returning default ports for schemes if not specified
+func getPortFromURL(u *url.URL) int {
+	port := u.Port()
+	if port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			return p
+		}
+	}
+
+	switch u.Scheme {
+	case "https":
+		return 443
+	case "http":
+		return 80
+	default:
+		return 0
+	}
 }
