@@ -7,6 +7,19 @@
       },
       "http_body": ["error code:"]
     },
+    "cloudflare_redirection": {
+      "http_status_code": "300-399",
+      "http_header": {
+        "Server": "cloudflare"
+      },
+      "check_redirect": {
+        "source_ports": [
+          8080, 8880, 2052, 2082, 2086, 2095, 2053, 2083, 2087, 2096, 8443
+        ],
+        "target_ports": [80, 443],
+        "redirect_to_root_host": true
+      }
+    },
     "cloudfront": {
       "http_status_code": "400",
       "http_header": {
