@@ -28,9 +28,8 @@ type Response struct {
 
 // CheckRedirect represents redirect checking configuration
 type CheckRedirect struct {
-	SourcePorts        []int `json:"source_ports"`
-	TargetPorts        []int `json:"target_ports"`
-	RedirectToRootHost bool  `json:"redirect_to_root_host"`
+	SourcePorts []int `json:"source_ports"`
+	TargetPorts []int `json:"target_ports"`
 }
 
 // RuleJSON represents the JSON structure for loading rules
@@ -248,11 +247,6 @@ func matchRedirectRule(resp Response, redirectRule CheckRedirect) bool {
 		parsedLocation.Host = parsedOriginalURL.Host
 	}
 
-	if redirectRule.RedirectToRootHost {
-		if parsedLocation.Path != "/" && parsedLocation.Path != "" {
-			return false
-		}
-	}
 	targetPort := getPortFromURL(parsedLocation)
 	return slices.Contains(redirectRule.TargetPorts, targetPort)
 }
