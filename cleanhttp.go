@@ -39,7 +39,9 @@ type RuleJSON struct {
 	HTTPBody       []string          `json:"http_body,omitempty"`
 	HTTPBodyRegex  []string          `json:"http_body_regex,omitempty"`
 	HTTPTitle      string            `json:"http_title,omitempty"`
+	HTTPTitleRegex []string          `json:"http_title_regex,omitempty"`
 	CheckRedirect  *CheckRedirect    `json:"check_redirect,omitempty"`
+	SourcePorts    []int             `json:"source_ports,omitempty"`
 }
 
 // ServicesJSON represents the root JSON structure
@@ -55,6 +57,8 @@ type Rule struct {
 	BodyContains  []string
 	BodyRegex     []*regexp.Regexp
 	TitleExact    string
+	TitleRegex    []*regexp.Regexp
+	SourcePorts   []int
 	RedirectCheck *CheckRedirect
 }
 
@@ -116,6 +120,7 @@ func compileRule(jr RuleJSON) (Rule, error) {
 		Headers:       make(map[string]string),
 		BodyContains:  jr.HTTPBody,
 		TitleExact:    jr.HTTPTitle,
+		SourcePorts:   jr.SourcePorts,
 		RedirectCheck: jr.CheckRedirect,
 	}
 	for k, v := range jr.HTTPHeader {
@@ -152,6 +157,15 @@ func compileRule(jr RuleJSON) (Rule, error) {
 			return Rule{}, fmt.Errorf("invalid body regex pattern %q: %w", pattern, err)
 		}
 		rule.BodyRegex = append(rule.BodyRegex, re)
+	}
+
+	// Compile title regex patterns
+	for _, pattern := range jr.HTTPTitleRegex {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return Rule{}, fmt.Errorf("invalid title regex pattern %q: %w", pattern, err)
+		}
+		rule.TitleRegex = append(rule.TitleRegex, re)
 	}
 
 	return rule, nil
@@ -199,8 +213,15 @@ func matchRule(resp Response, rule Rule) bool {
 	}
 
 	// Body regex check
-	for _, re := range rule.BodyRegex {
-		if !re.MatchString(resp.Body) {
+	if len(rule.BodyRegex) > 0 {
+		matched := false
+		for _, re := range rule.BodyRegex {
+			if re.MatchString(resp.Body) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
 			return false
 		}
 	}
@@ -208,6 +229,32 @@ func matchRule(resp Response, rule Rule) bool {
 	// Title checks
 	if rule.TitleExact != "" && resp.Title != rule.TitleExact {
 		return false
+	}
+
+	// Title regex check
+	if len(rule.TitleRegex) > 0 {
+		matched := false
+		for _, re := range rule.TitleRegex {
+			if re.MatchString(resp.Title) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+
+	// Source ports check
+	if len(rule.SourcePorts) > 0 {
+		parsedURL, err := url.Parse(resp.RequestURL)
+		if err != nil {
+			return false
+		}
+		sourcePort := getPortFromURL(parsedURL)
+		if !slices.Contains(rule.SourcePorts, sourcePort) {
+			return false
+		}
 	}
 
 	// Redirect check
